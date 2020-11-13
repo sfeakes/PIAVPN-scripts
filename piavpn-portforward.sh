@@ -472,7 +472,7 @@ fi
 case $1 in
   check_install)
     output=""
-    if ! command -v $CURL &>/dev/null; then output+="Please check 'curl is installed\n"; fi
+    if ! command -v $CURL &>/dev/null; then output+="Please check 'curl' is installed\n"; fi
     if ! command -v $IP &>/dev/null; then output+="Please check 'ip' is installed\n"; fi
     if ! command -v $IFCONFIG &>/dev/null; then output+="Please check 'ifconfig' is installed\n"; fi
     if ! command -v $TRACEROUTE &>/dev/null; then output+="Please check 'traceroute' is installed\n"; fi

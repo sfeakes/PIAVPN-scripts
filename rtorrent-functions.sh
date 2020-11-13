@@ -763,21 +763,51 @@ function status_rTorrent() {
   return $status
 }
 
+
 function overview_rTorrent() {
-  json=$($CURL -s -m $CURL_TIMEOUT "http://localhost/?t=torrentstats")
 
-  if [ "$1" = "json" ]; then
-    echo $json
-    return
-  fi
+  # Big output so run at same level. (the while/do/done)
 
-  total_torrents="$(echo "$json" | $JQ -r '.total_torrents')"
-  upload_speed_kB="$(echo "$json" | $JQ -r '.upload_speed_kB')"
-  download_speed_kB="$(echo "$json" | $JQ -r '.download_speed_kB')"
-  size_TB="$(echo "$json" | $JQ -r '.size_TB')"
-  inerror="$(echo "$json" | $JQ -r '.inerror')"
-  active_torrents="$(echo "$json" | $JQ -r '.active_torrents')"
-  peers_connected="$(echo "$json" | $JQ -r '.peers_connected')"
+  lc=0
+  tlc=0
+  up=0
+  down=0
+  active_torrents=0
+  t_size=0
+  peers_connected=0
+  inerror=0
+  total_torrents=0
+  while read line; do 
+    if [ $(( $lc % 6 )) -eq 0 ]; then tlc=0; fi
+
+    if [ $tlc -eq 1 ]; then
+      up=$(($up+$line))
+      l_up=$line
+    elif [ $tlc -eq 2 ]; then
+      down=$(($down+$line))
+    elif [ $tlc -eq 3 ]; then
+      peers_connected=$(($peers_connected+$line))
+      if [ $l_up -gt 0 ] || [ $line -gt 0 ]; then
+        active_torrents=$(($active_torrents+1))
+      fi
+    elif [ $tlc -eq 4 ]; then
+      t_size=$(($t_size+$line))
+    elif [ $tlc -eq 5 ]; then
+      if [ "$line" != "''" ]; then
+        inerror=$(($inerror+1))
+      fi
+    elif [ $tlc -eq 5 ]; then
+      total_torrents=$(($total_torrents+1))
+    fi
+    lc=$((lc+1))
+    tlc=$((tlc+1))
+  done << EOF
+  $($XMLRPC $XMLRPC_CON d.multicall2 '' main d.up.rate= d.down.rate= d.peers_connected= d.size_bytes= d.message= | awk -F: '/Index/ {print $2}')
+EOF
+
+  upload_speed_kB=$(awk "BEGIN {printf \"%.1f\", ($up / 1000000000000)}")
+  download_speed_kB=$(awk "BEGIN {printf \"%.1f\", ($down / 1000000000000)}")
+  size_TB=$(awk "BEGIN {printf \"%.2f\", ($t_size / 1000000000000)}")
 
   if [ "$1" = "pp" ]; then
     printf "  \033[1m%-17s \033[0m%-16s \033[1m%-17s \033[0m%-16s\n" "Up:" "$upload_speed_kB kB/s" "Down:" "$download_speed_kB kB/s"
@@ -825,6 +855,21 @@ function install() {
   for i in ${!LN_NAMES[@]}; do
     term_print "$BIN_DIR/${LN_NAMES[$i]}"
   done
+
+  output=""
+  if ! command -v $CURL &>/dev/null; then output+="Please check 'curl' is installed\n"; fi
+  if ! command -v $IP &>/dev/null; then output+="Please check 'ip' is installed\n"; fi
+  if ! command -v $IFCONFIG &>/dev/null; then output+="Please check 'ifconfig' is installed\n"; fi
+  if ! command -v $TRACEROUTE &>/dev/null; then output+="Please check 'traceroute' is installed\n"; fi
+  if ! command -v $JQ &>/dev/null; then output+="Please check 'jq' is installed\n"; fi
+  if ! command -v $DIG &>/dev/null; then output+="Please check 'dig' is installed\n"; fi
+  if [ "$PIA_USER" == "" ]; then output+="Please set PIA_USER variable\n";fi
+  if [ "$PIA_PASS" == "" ]; then output+="Please set PIA_PASS variable\n";fi
+  if [ "$output" == "" ]; then
+      echo "System test passed"
+  else
+      printf "Errors:-\n%b" "${output}"
+  fi
 }
 
 function vpn_call_rTorrent() {
