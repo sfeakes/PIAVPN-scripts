@@ -22,10 +22,10 @@ PIA_USER=piauserxxxxxxx
 PIA_PASS=pispassxxxxxx
 ```
 
-Run this first to make sure everything is set  
+Run this first to make sure everything is set.  
 `./piavpn-portforward.sh check_install`
 
-To get port.  PIA can change this port on you, so the application that needs the port forward information should call this at a regular interval. 
+To get port.  PIA can change this port on you, so the application that needs the port forward information should call this at a regular interval.  
 `./piavpn-portforward.sh get_public_port`
 
 Heartbeat, should be run on ~15min schedule. PIA will drop your portforward if you don't keep a heartbeat to them. If your application is calling `get_public_port` at an 15min interval or less, you do not need to make the below call.  
