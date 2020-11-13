@@ -64,7 +64,7 @@ LN_NAMES=("rtorrent_recondition" "rtorrent_status" "rtorrent_bindPIAport" "rtorr
 # down /usr/bin/rtorrent_vpn_down
 #
 # /etc/sudoers needs access to these scripts and systemctl
-# sf,rtorrent,www-data 192.168.144.0/255.255.255.0=(root) NOPASSWD: /usr/lib/rtorrent-utils/*, /usr/sbin/traceroute, /usr/bin/systemctl
+# rtorrent,www-data 192.168.0.0/255.255.255.0=(root) NOPASSWD: /usr/lib/rtorrent-utils/*, /usr/sbin/traceroute, /usr/bin/systemctl
 #
 # Crontab also needs to be set
 # # Run every hour
@@ -468,7 +468,6 @@ function test_PIA_portforward() {
     return $FALSE
   fi
 
-  #ext_status=$($CURL -s -m $CURL_TIMEOUT "http://feakes.cc/share/pc.php?p=$port")
   ext_status=$($CURL -s -X POST -d "remoteAddress=$public_ip&portNumber=$port" "https://ports.yougetsignal.com/check-port.php" | awk 'BEGIN { RS=" ";FS="\"" } /alt/{print $2}')
 
   if [ "$ext_status" == "Open" ]; then
