@@ -2,10 +2,10 @@
 
 Helper scripts for PIA VPN port forwarding. This is for PIA VPN's Nextgen servers only.
 
-The outline the portforwarding of these scripts was taken from the below repo, so credit to them :-
+The outline for portforwarding of these scripts were taken from the below repo, so credit to them :-
 https://github.com/pia-foss/manual-connections
 
-Problem is the above is it's designed to start your vpn connection and also do portforward. The scripts simply won't work when something else starts the vpn connection.
+Problem with the above is it's designed to start your vpn connection and also do portforward. The scripts in the above repo simply won't work when something else starts the vpn connection. There are also some other issues with the above, that make them not really optimal for the way I (and many others) like to use a VPN.  
 The scripts in this repo are designed for the system (i.e any of the Linux service managers) to start and manage the vpn connection and for the script to use that connection to make the portforward call.
 
 #
@@ -32,7 +32,7 @@ All script options are below, hopefully the names are self explanatory.
   * get_vpn_ip_address
   * get_public_port
   * bind_public_port
-  * get_status
+  * get_status (optional parameter `extended`)
   * check_install
 
 

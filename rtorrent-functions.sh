@@ -805,9 +805,9 @@ function overview_rTorrent() {
   $($XMLRPC $XMLRPC_CON d.multicall2 '' main d.up.rate= d.down.rate= d.peers_connected= d.size_bytes= d.message= | awk -F: '/Index/ {print $2}')
 EOF
 
-  upload_speed_kB=$(awk "BEGIN {printf \"%.1f\", ($up / 1000000000000)}")
-  download_speed_kB=$(awk "BEGIN {printf \"%.1f\", ($down / 1000000000000)}")
-  size_TB=$(awk "BEGIN {printf \"%.2f\", ($t_size / 1000000000000)}")
+  upload_speed_kB=$(awk "BEGIN {printf \"%.1f\", ($up / 1024)}")
+  download_speed_kB=$(awk "BEGIN {printf \"%.1f\", ($down / 1024)}")
+  size_TB=$(awk "BEGIN {printf \"%.2f\", ($t_size / 1099511627776)}")
 
   if [ "$1" = "pp" ]; then
     printf "  \033[1m%-17s \033[0m%-16s \033[1m%-17s \033[0m%-16s\n" "Up:" "$upload_speed_kB kB/s" "Down:" "$download_speed_kB kB/s"

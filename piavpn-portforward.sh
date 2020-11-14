@@ -10,21 +10,21 @@ VPN_INTERFACE="tun0"
 
 CURL="/usr/bin/curl"
 CURL_TIMEOUT=4
-#IP="/usr/sbin/ip"
-IP="/sbin/ip"
+IP="/usr/sbin/ip"
+#IP="/sbin/ip"
 IFCONFIG="/sbin/ifconfig"
 TRACEROUTE="/usr/sbin/traceroute"
 JQ="/usr/bin/jq"
 DIG="/usr/bin/dig"
 
 # If you use a credentials file for openvpn, you can point to it here.
-# if not comment `CREDENTIALS=`` uncomment the `PIA_USER=` & `PIA_PASS=` and set them appropiatly.
+# if not comment `CREDENTIALS=` and uncomment the `PIA_USER=` & `PIA_PASS=` and set them appropiatly.
 CREDENTIALS='/etc/openvpn/user.txt'
 #PIA_USER=piauserxxxxxxx
 #PIA_PASS=pispassxxxxxx
 
-# There are sever ways to get your public ip address.
-# using opendns, using google dns servers, or using ipinfo.io, set your predered below
+# There are several ways to get your public ip address.
+# using opendns servers, google dns servers, or ipinfo.io, set your predered below
 # "opendns" "googledns" "ipinfo"
 GET_PUBLIC_IP_METHOD="opendns"
 
@@ -179,7 +179,7 @@ function is_VPN_up()
 
 function get_PIA_gateway()
 {
-  PIAgateway=$(ip route s t all | grep -m 1 "0.0.0.0/1 via .* dev ${VPN_INTERFACE}" | cut -d ' ' -f3)
+  PIAgateway=$($IP route s t all | grep -m 1 "0.0.0.0/1 via .* dev ${VPN_INTERFACE}" | cut -d ' ' -f3)
 
   if [ -z "$PIAgateway" ]; then
     echo $BAD_IP
@@ -192,7 +192,7 @@ function get_PIA_gateway()
 
 function get_PIA_usertoken()
 {
-  generateTokenResponse=$(curl --interface "${VPN_INTERFACE}" --silent --insecure -u "${PIA_USER}:${PIA_PASS}" "https://10.0.0.1/authv3/generateToken")
+  generateTokenResponse=$($CURL --interface "${VPN_INTERFACE}" --silent --insecure -u "${PIA_USER}:${PIA_PASS}" "https://10.0.0.1/authv3/generateToken")
 
   if [ "$(echo "$generateTokenResponse" | jq -r '.status')" != "OK" ]; then
     error "Could not get a PIA user token. Please check your account credentials."
@@ -405,6 +405,11 @@ function pia_status() {
   port_bind_test=$(bind_PIA_portforward)
   printf "%-12s | %-15s | %-15s\n" "Ext Access" `if [ "$port_bind_test" == "$FALSE" ];then echo Failed;else echo Passed;fi` `if [ "$external_port_test" == "$FALSE" ];then echo Failed;else echo Passed; fi`
   printf "%s\n" "------------------------------------------------"
+
+  if [ "$1" == "extended" ]; then
+    $CURL -s http://ipinfo.io | awk -F\" '/:/ && !/readme/ {printf "%-12s | %-30s\n", $2, $4}'
+    printf "%s\n" "------------------------------------------------"
+  fi
 }
 
 
@@ -520,7 +525,7 @@ case $1 in
     exit 0
   ;;
   get_status)
-    pia_status
+    pia_status $2
     exit 0
   ;;
     
