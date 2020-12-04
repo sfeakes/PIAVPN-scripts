@@ -36,13 +36,42 @@ All script options are below, hopefully the names are self explanatory.
   * check_install
 
 
-
-To get port.  PIA can change this port on you, so the application that needs the port forward information should call this at a regular interval.  
+To get port, simply run the below command
 `./piavpn-portforward.sh get_public_port`
+Please note, PIA can change this port on you, so the application that needs the port forward information should call this at a regular interval and update appropiatly. The script will get a token that's valid for 2 months, and it will keep using that token until it expires. PIA will also expire the port if you don't keep a heartbeat going. This heartbeat needs to be at 15 min intervals, so simply get your application to call the above every 15 mins, or you can use the `bind_public_port` option below.
 
 Heartbeat, should be run on ~15min schedule. PIA will drop your portforward if you don't keep a heartbeat to them. If your application is calling `get_public_port` at an 15min interval or less, you do not need to make the below call.  
 `./piavpn-portforward.sh bind_public_port`
- 
+
+Sample output of the `get_status` option is below, (with extended option passed)
+please note the "Ext Access" test.  The PIA VPN column is a bind test, ie the script managed to bind to the port, the System column is an external test, ie outside world can connect to the ip & port, so you will need your application receiving information to pass that test.
+```
+sudo ./piavpn-portforward.sh get_status extended
+------------------------------------------------
+Test         | PIA VPN         | System         
+------------------------------------------------
+VPN Running  | Yes             | N/A            
+VPN IP       | 10.14.112.19    | 10.14.112.19   
+Public IP    | 212.102.37.195  | 212.102.37.195 
+Port forward | 37675           | N/A            
+Ext Access   | Passed          | Passed         
+------------------------------------------------
+Public IP information
+------------------------------------------------
+ip           | 212.102.37.195                
+hostname     | unn-212-102-37-195.cdn77.com  
+city         | Zürich                        
+region       | Zurich                        
+country      | CH                            
+loc          | 47.3828,8.5307                
+org          | AS60068 Datacamp Limited      
+postal       | 8086                          
+timezone     | Europe/Zurich                 
+------------------------------------------------
+```
+
+
+
 #
   
   
@@ -55,3 +84,35 @@ The basic idea of this script is it keeps rtorrent insync with pia vpn & port fo
 * Called from `rtorrent` to get all public network information (bind ip, public ip, public port forwatd), if PIA portworwarding is not active on any of these calls, the script will activate it.
 * Called from vpn connecting or closing. `openvpn` or `WireGuard`
 * Called from `cron` as a health check, it will stop / start / restart vpn & rtorrent depending on status of connections.
+
+### configure sudoers
+/etc/sudoers rtorrent user (rtorrent in this example) need root access to these scripts
+``
+rtorrent, =(root) NOPASSWD: /usr/lib/rtorrent-utils/*
+``
+
+### configure rtorrent
+The below will make rtorrent call this script on startup and regular intervals to get the appropiate information. `network.bind_address, network.port_range network.local_address`
+.rtorrent.rc
+```
+method.insert = get_vpn_ip_address, simple|private, "execute.capture=bash,-c,\"sudo /usr/bin/rtorrent_helper get_vpn_ip_address\""
+method.insert = get_public_port, simple|private, "execute.capture=bash,-c,\"sudo /usr/bin/rtorrent_helper get_public_port\""
+method.insert = get_public_ip_address, simple|private, "execute.capture=bash,-c,\"sudo /usr/bin/rtorrent_helper get_public_ip_address\""
+schedule2 = vpn_ip_tick, 3, 1800, "network.bind_address.set=(get_vpn_ip_address)"
+schedule2 = public_port_tick, 0, 900, "network.port_range.set=(get_public_port)"
+schedule2 = public_ip_tick, 2, 1800, "network.local_address.set=(get_public_ip_address)"
+```
+
+### configure cron
+```
+# Run every hour
+0 * * * * "/usr/bin/rtorrent_recondition"
+```
+
+### configure openvpn
+Optional, add below to your openvpn (vpn) configuration file, by default /etc/openvpn/xxx.conf
+```
+script-security 2
+up /usr/bin/rtorrent_vpn_up
+down /usr/bin/rtorrent_vpn_down
+```

@@ -45,8 +45,8 @@ fi
 TRUE=0
 FALSE=1
 
-BAD_PORT="0"
-BAD_IP="1.1.1.1"
+BAD_PORT="6000"
+BAD_IP="127.0.0.1"
 
 
 if [ -t 0 ]; then 
@@ -54,6 +54,7 @@ if [ -t 0 ]; then
 else
   TERMINAL=$FALSE
 fi
+
 # ******************************************************************************************
 #
 #  Helper functions
@@ -77,12 +78,27 @@ function error() {
   fi
 }
 
+function warning() {
+  #>&2 echo "Error: "$0" "$*
+  if [ "$TERMINAL" == "$TRUE" ]; then
+    logger -s "Warning: "$0" "$*
+  else
+    logger "Warning: "$0" "$*
+  fi
+}
+
 # Print if we are in terminal, but print to stderror since stdout is for function returns
 function term_print() {
   if [ "$TERMINAL" == "$TRUE" ]; then
     >&2 echo "$*"
   fi
 }
+
+# ******************************************************************************************
+#
+#  PIA Portforward functions
+#
+# ******************************************************************************************
 
 function is_valid_ip() {
   if [[ $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -218,11 +234,6 @@ function create_PIA_portforward()
   pia_gateway=$(get_PIA_gateway)
   pia_vpnIP=$(get_PIA_VPN_IP)
 
-  #pia_token=$1
-  #pia_gateway=$2
-  #pia_vpnIP=$3
-  #pia_publicIP=$4
-
   payload_and_signature=$($CURL --insecure --silent --max-time 5 --get --data-urlencode "token=${pia_token}" "https://${pia_gateway}:19999/getSignature")
 
   # Check if the payload and the signature are OK.
@@ -250,7 +261,7 @@ function create_PIA_portforward()
   expires_at="$(echo "$payload" | base64 -d | $JQ -r '.expires_at')"
 
   $(umask 077; touch $PIA_INFO_FILE)
-  echo "token:$pia_token" >> $PIA_INFO_FILE
+  echo "token:$pia_token" > $PIA_INFO_FILE
   echo "gateway:$pia_gateway" >> $PIA_INFO_FILE
   echo "publicIP:$pia_publicIP"  >> $PIA_INFO_FILE
   echo "vpnIP:$pia_vpnIP"  >> $PIA_INFO_FILE
@@ -277,26 +288,26 @@ function check_PIA_portfwd_cfg() {
   fi
 
   if [ "$public_ip" != "`get_public_IP`" ]; then
-    error "PIA External IP changed"
+    warning "PIA External IP changed"
     echo $FALSE
     return $FALSE
   fi
 
   if [ "$gateway" != "`get_PIA_gateway`" ]; then
-    error "PIA Gateway changed"
+    warning "PIA Gateway changed"
     echo $FALSE
     return $FALSE
   fi
 
   if [ "$vpnip" != "`get_PIA_VPN_IP`" ]; then
-    error "PIA VPN IP changed"
+    warning "PIA VPN IP changed"
     echo $FALSE
     return $FALSE
   fi
 
   # Should probably to 15 mins before time expires
   if [ $(date +"%s") -gt $(date --date "$expires" +"%s") ]; then
-    error "PIA port forward token out of date"
+    warning "PIA port forward token out of date"
     echo $FALSE
     return $FALSE
   fi
@@ -314,7 +325,7 @@ function bind_PIA_portforward() {
     payload=$(cat $PIA_INFO_FILE | grep 'payload:' | cut -d: -f2)
     port=$(cat $PIA_INFO_FILE | grep 'port:' | cut -d: -f2)
   else
-    error "Error: $PIA_INFO_FILE doesn't exist"
+    error "$PIA_INFO_FILE doesn't exist"
     echo $FALSE
     return $FALSE
   fi
@@ -328,11 +339,13 @@ function bind_PIA_portforward() {
   #error "return $bind_port_response"
 
   if [ -z "$bind_port_response" ]; then
+    error "No reply from PIA on bind request"
     echo $FALSE
     return $FALSE
   fi
 
   if [ "`echo "$bind_port_response" | $JQ -r '.status'`" != "OK" ]; then
+    error "Failed PIA bind request"
     echo $FALSE
     return $FALSE
   fi
@@ -340,7 +353,6 @@ function bind_PIA_portforward() {
   echo $port
   return $TRUE
 }
-
 
 
 function test_PIA_portforward() {
@@ -352,11 +364,55 @@ function test_PIA_portforward() {
     return $FALSE
   fi
 
-  ext_status=$($CURL -s -X POST -d "remoteAddress=$public_ip&portNumber=$port" "https://ports.yougetsignal.com/check-port.php" | awk 'BEGIN { RS=" ";FS="\"" } /alt/{print $2}')
+  ext_status=$($CURL -s -m $CURL_TIMEOUT "https://proxy6.net/port-check" -H "X-Requested-With: XMLHttpRequest" --data-raw "ip=$public_ip&port=$port&hash=&form_id=form-port-check")
+  ext_status=$(echo $ext_status | $JQ -r '.result."'$port'"' )
+
+  if [ "$ext_status" == "true" ]; then
+    echo $TRUE
+    return $TRUE
+  elif [ "$ext_status" == "false" ]; then
+    echo $FALSE
+    return $FALSE
+  fi
+  
+  # Note below Can also get the below reply
+  # {"status":"failure","message":"System temporarily offline due to heavy load."}
+  ext_status=$($CURL -s -m $CURL_TIMEOUT -X POST -d "remoteAddress=$public_ip&portNumber=$port" "https://ports.yougetsignal.com/check-port.php" | awk 'BEGIN { RS=" ";FS="\"" } /alt/{print $2}')
 
   if [ "$ext_status" == "Open" ]; then
     echo $TRUE
     return $TRUE
+  elif [ "$ext_status" == "Closed" ]; then
+    echo $FALSE
+    return $FALSE
+  fi
+
+
+  #Got a reply we didn;t understand from ports.yougetsignal.com, so check different URL 
+
+  # [{"port":"25757","response_time":"0ms","status":"Open"}]
+  # [{"port":"25759","response_time":"-","status":"Close"}]
+  ext_status=$($CURL -s -m $CURL_TIMEOUT --data-raw "domain=$public_ip&port=$port" "https://codebeautify.org/iptools/openPortChecker")
+  ext_status=$(echo $ext_status |  tr -d '[]' | $JQ -r '.status' )
+
+  if [ "$ext_status" == "Open" ]; then
+    echo $TRUE
+    return $TRUE
+  elif [ "$ext_status" == "Closed" ]; then
+    echo $FALSE
+    return $FALSE
+  fi
+
+  # Still no definitive answer, 
+
+  ext_status=$($CURL -s -m $CURL_TIMEOUT  "https://www.ipfingerprints.com/scripts/getPortsInfo.php" --data-raw "remoteHost=$public_ip&start_port=$port&end_port=$port&normalScan=Yes3scan_type=connect&ping_3ype=none" -s | sed -n "s/^.*bold.*> \(.*\) <.*span.*$/\1/p")
+  # Should return open closed filtered unfiltered open|filtered closed|filtered
+  if [ "$ext_status" == *"open"* ] || [ "$ext_status" == "filtered" ]; then
+    echo $TRUE
+    return $TRUE
+  elif [ "$ext_status" == *"closed"* ]; then
+    echo $FALSE
+    return $FALSE
   fi
 
   echo $FALSE
@@ -407,6 +463,8 @@ function pia_status() {
   printf "%s\n" "------------------------------------------------"
 
   if [ "$1" == "extended" ]; then
+    printf "%s\n" "Public IP information"
+    printf "%s\n" "------------------------------------------------"
     $CURL -s http://ipinfo.io | awk -F\" '/:/ && !/readme/ {printf "%-12s | %-30s\n", $2, $4}'
     printf "%s\n" "------------------------------------------------"
   fi

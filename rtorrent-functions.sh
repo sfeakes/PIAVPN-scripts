@@ -2,7 +2,7 @@
 TRUE=0
 FALSE=1
 
-#STOP_START_RTORRENT_ON_VPN_CONNECTION=$FALSE
+STOP_START_RTORRENT_ON_VPN_CONNECTION=$FALSE
 
 PIA_INFO_FILE="/tmp/pia_vpn.info"
 VPN_INTERFACE="tun0"
@@ -20,19 +20,25 @@ PGREP="/usr/bin/pgrep"
 
 XMLRPC_CON="localhost:80/RPC2"
 
-BAD_PORT="0"
-BAD_IP="1.1.1.1"
+BAD_PORT="6000"
+BAD_IP="127.0.0.1"
 
 START_VPN_CMD="$SYSTEMCTL start openvpn"
 STOP_VPN_CMD="$SYSTEMCTL stop openvpn"
 START_RTORNT_CMD="$SYSTEMCTL start rtorrent"
 STOP_RTORNT_CMD="$SYSTEMCTL stop rtorrent"
 
+# If you use a credentials file for openvpn, you can point to it here.
+# if not comment `CREDENTIALS=` and uncomment the `PIA_USER=` & `PIA_PASS=` and set them appropiatly.
 CREDENTIALS='/etc/openvpn/user.txt'
-# Since we don't always run this as root, can get error, so hide it.
-PIA_USER=$(sed '1q;d' $CREDENTIALS 2>/dev/null)
-PIA_PASS=$(sed '2q;d' $CREDENTIALS 2>/dev/null)
+#PIA_USER=piauserxxxxxxx
+#PIA_PASS=pispassxxxxxx
 
+
+# There are several ways to get your public ip address.
+# using opendns servers, google dns servers, or ipinfo.io, set your predered below
+# "opendns" "googledns" "ipinfo"
+GET_PUBLIC_IP_METHOD="opendns"
 
 # This is used for pgrep only,  match rtorrent but not rtorrent_somecrap 
 #TRP_REGEX="rtorrent .*"
@@ -64,7 +70,7 @@ LN_NAMES=("rtorrent_recondition" "rtorrent_status" "rtorrent_bindPIAport" "rtorr
 # down /usr/bin/rtorrent_vpn_down
 #
 # /etc/sudoers needs access to these scripts and systemctl
-# rtorrent,www-data 192.168.0.0/255.255.255.0=(root) NOPASSWD: /usr/lib/rtorrent-utils/*, /usr/sbin/traceroute, /usr/bin/systemctl
+# rtorrent,www-data =(root) NOPASSWD: /usr/lib/rtorrent-utils/*, /usr/sbin/traceroute, /usr/bin/systemctl
 #
 # Crontab also needs to be set
 # # Run every hour
@@ -84,11 +90,17 @@ LN_NAMES=("rtorrent_recondition" "rtorrent_status" "rtorrent_bindPIAport" "rtorr
 #
 # ******************************************************************************************
 
+if [ -f "$CREDENTIALS" ]; then
+  PIA_USER=$(sed '1q;d' $CREDENTIALS 2>/dev/null)
+  PIA_PASS=$(sed '2q;d' $CREDENTIALS 2>/dev/null)
+fi
+
 if [ -t 0 ]; then 
   TERMINAL=$TRUE
 else
   TERMINAL=$FALSE
 fi
+
 # ******************************************************************************************
 #
 #  Helper functions
@@ -112,12 +124,27 @@ function error() {
   fi
 }
 
+function warning() {
+  #>&2 echo "Error: "$0" "$*
+  if [ "$TERMINAL" == "$TRUE" ]; then
+    logger -s "Warning: "$0" "$*
+  else
+    logger "Warning: "$0" "$*
+  fi
+}
+
 # Print if we are in terminal, but print to stderror since stdout is for function returns
 function term_print() {
   if [ "$TERMINAL" == "$TRUE" ]; then
     >&2 echo "$*"
   fi
 }
+
+# ******************************************************************************************
+#
+#  PIA Portforward functions
+#
+# ******************************************************************************************
 
 function is_valid_ip() {
   if [[ $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -161,11 +188,14 @@ function get_PIA_portforward() {
 }
 
 function get_public_IP() {
-  # Google options would be dig TXT +short o-o.myaddr.l.google.com @ns1.google.com
-  #publicIP=$($DIG dig TXT +short -b $(get_PIA_VPN_IP) o-o.myaddr.l.google.com @ns1.google.com 2>/dev/null | tr -d '"' )
-  #publicIP=$($CURL -s -m $CURL_TIMEOUT http://ipinfo.io/ip)
-  publicIP=$($DIG +short -b $(get_PIA_VPN_IP) myip.opendns.com @resolver1.opendns.com 2>/dev/null )
 
+  if [ "$GET_PUBLIC_IP_METHOD" == "googledns" ]; then
+    publicIP=$($DIG dig TXT +short -b $(get_PIA_VPN_IP) o-o.myaddr.l.google.com @ns1.google.com 2>/dev/null | tr -d '"' )
+  elif [ "$GET_PUBLIC_IP_METHOD" == "ipinfo" ]; then
+    publicIP=$($CURL -s -m $CURL_TIMEOUT http://ipinfo.io/ip)
+  else
+    publicIP=$($DIG +short -b $(get_PIA_VPN_IP) myip.opendns.com @resolver1.opendns.com 2>/dev/null )
+  fi
   if [ -z "$publicIP" ]; then
     echo $BAD_IP
     return $FALSE
@@ -207,21 +237,10 @@ function is_VPN_up()
   return $TRUE
 }
 
-function is_rTorrent_running()
-{
-  #if $PGREP -f $TR_BIN &>/dev/null ; then
-  if $PGREP -f "$TRP_REGEX" &>/dev/null ; then
-    echo $TRUE
-    return $TRUE
-  else
-    echo $FALSE
-    return $FALSE
-  fi
-}
 
 function get_PIA_gateway()
 {
-  PIAgateway=$(ip route s t all | grep -m 1 "0.0.0.0/1 via .* dev ${VPN_INTERFACE}" | cut -d ' ' -f3)
+  PIAgateway=$($IP route s t all | grep -m 1 "0.0.0.0/1 via .* dev ${VPN_INTERFACE}" | cut -d ' ' -f3)
 
   if [ -z "$PIAgateway" ]; then
     echo $BAD_IP
@@ -234,7 +253,7 @@ function get_PIA_gateway()
 
 function get_PIA_usertoken()
 {
-  generateTokenResponse=$(curl --interface "${VPN_INTERFACE}" --silent --insecure -u "${PIA_USER}:${PIA_PASS}" "https://10.0.0.1/authv3/generateToken")
+  generateTokenResponse=$($CURL --interface "${VPN_INTERFACE}" --silent --insecure -u "${PIA_USER}:${PIA_PASS}" "https://10.0.0.1/authv3/generateToken")
 
   if [ "$(echo "$generateTokenResponse" | jq -r '.status')" != "OK" ]; then
     error "Could not get a PIA user token. Please check your account credentials."
@@ -259,11 +278,6 @@ function create_PIA_portforward()
   pia_token=$(get_PIA_usertoken)
   pia_gateway=$(get_PIA_gateway)
   pia_vpnIP=$(get_PIA_VPN_IP)
-
-  #pia_token=$1
-  #pia_gateway=$2
-  #pia_vpnIP=$3
-  #pia_publicIP=$4
 
   payload_and_signature=$($CURL --insecure --silent --max-time 5 --get --data-urlencode "token=${pia_token}" "https://${pia_gateway}:19999/getSignature")
 
@@ -291,6 +305,7 @@ function create_PIA_portforward()
   # 2 months is not enough for your setup, please open a ticket.
   expires_at="$(echo "$payload" | base64 -d | $JQ -r '.expires_at')"
 
+  $(umask 077; touch $PIA_INFO_FILE)
   echo "token:$pia_token" > $PIA_INFO_FILE
   echo "gateway:$pia_gateway" >> $PIA_INFO_FILE
   echo "publicIP:$pia_publicIP"  >> $PIA_INFO_FILE
@@ -318,26 +333,26 @@ function check_PIA_portfwd_cfg() {
   fi
 
   if [ "$public_ip" != "`get_public_IP`" ]; then
-    error "PIA External IP changed"
+    warning "PIA External IP changed"
     echo $FALSE
     return $FALSE
   fi
 
   if [ "$gateway" != "`get_PIA_gateway`" ]; then
-    error "PIA Gateway changed"
+    warning "PIA Gateway changed"
     echo $FALSE
     return $FALSE
   fi
 
   if [ "$vpnip" != "`get_PIA_VPN_IP`" ]; then
-    error "PIA VPN IP changed"
+    warning "PIA VPN IP changed"
     echo $FALSE
     return $FALSE
   fi
 
   # Should probably to 15 mins before time expires
   if [ $(date +"%s") -gt $(date --date "$expires" +"%s") ]; then
-    error "PIA port forward token out of date"
+    warning "PIA port forward token out of date"
     echo $FALSE
     return $FALSE
   fi
@@ -355,7 +370,7 @@ function bind_PIA_portforward() {
     payload=$(cat $PIA_INFO_FILE | grep 'payload:' | cut -d: -f2)
     port=$(cat $PIA_INFO_FILE | grep 'port:' | cut -d: -f2)
   else
-    error "Error: $PIA_INFO_FILE doesn't exist"
+    error "$PIA_INFO_FILE doesn't exist"
     echo $FALSE
     return $FALSE
   fi
@@ -369,17 +384,104 @@ function bind_PIA_portforward() {
   #error "return $bind_port_response"
 
   if [ -z "$bind_port_response" ]; then
+    error "No reply from PIA on bind request"
     echo $FALSE
     return $FALSE
   fi
 
   if [ "`echo "$bind_port_response" | $JQ -r '.status'`" != "OK" ]; then
+    error "Failed PIA bind request"
     echo $FALSE
     return $FALSE
   fi
   
   echo $port
   return $TRUE
+}
+
+function test_PIA_portforward() {
+  if [ -f ${PIA_INFO_FILE} ]; then
+    port=$(cat $PIA_INFO_FILE | grep 'port:' | cut -d: -f2)
+    public_ip=$(cat $PIA_INFO_FILE | grep 'publicIP:' | cut -d: -f2)
+  else
+    echo $FALSE
+    return $FALSE
+  fi
+
+  ext_status=$($CURL -s -m $CURL_TIMEOUT "https://proxy6.net/port-check" -H "X-Requested-With: XMLHttpRequest" --data-raw "ip=$public_ip&port=$port&hash=&form_id=form-port-check")
+  ext_status=$(echo $ext_status | $JQ -r '.result."'$port'"' )
+
+  if [ "$ext_status" == "true" ]; then
+    echo $TRUE
+    return $TRUE
+  elif [ "$ext_status" == "false" ]; then
+    echo $FALSE
+    return $FALSE
+  fi
+  
+  # Note below Can also get the below reply
+  # {"status":"failure","message":"System temporarily offline due to heavy load."}
+  ext_status=$($CURL -s -m $CURL_TIMEOUT -X POST -d "remoteAddress=$public_ip&portNumber=$port" "https://ports.yougetsignal.com/check-port.php" | awk 'BEGIN { RS=" ";FS="\"" } /alt/{print $2}')
+
+  if [ "$ext_status" == "Open" ]; then
+    echo $TRUE
+    return $TRUE
+  elif [ "$ext_status" == "Closed" ]; then
+    echo $FALSE
+    return $FALSE
+  fi
+
+
+  #Got a reply we didn;t understand from ports.yougetsignal.com, so check different URL 
+
+  # [{"port":"25757","response_time":"0ms","status":"Open"}]
+  # [{"port":"25759","response_time":"-","status":"Close"}]
+  ext_status=$($CURL -s -m $CURL_TIMEOUT --data-raw "domain=$public_ip&port=$port" "https://codebeautify.org/iptools/openPortChecker")
+  ext_status=$(echo $ext_status |  tr -d '[]' | $JQ -r '.status' )
+
+  if [ "$ext_status" == "Open" ]; then
+    echo $TRUE
+    return $TRUE
+  elif [ "$ext_status" == "Closed" ]; then
+    echo $FALSE
+    return $FALSE
+  fi
+
+  # Still no definitive answer, 
+
+  ext_status=$($CURL -s -m $CURL_TIMEOUT  "https://www.ipfingerprints.com/scripts/getPortsInfo.php" --data-raw "remoteHost=$public_ip&start_port=$port&end_port=$port&normalScan=Yes3scan_type=connect&ping_3ype=none" -s | sed -n "s/^.*bold.*> \(.*\) <.*span.*$/\1/p")
+  # Should return open closed filtered unfiltered open|filtered closed|filtered
+  if [ "$ext_status" == *"open"* ] || [ "$ext_status" == "filtered" ]; then
+    echo $TRUE
+    return $TRUE
+  elif [ "$ext_status" == *"closed"* ]; then
+    echo $FALSE
+    return $FALSE
+  fi
+
+  echo $FALSE
+  return $FALSE
+}
+
+
+# ******************************************************************************************
+#
+#  rTorrent functions
+#
+# ******************************************************************************************
+
+
+
+function is_rTorrent_running()
+{
+  #if $PGREP -f $TR_BIN &>/dev/null ; then
+  if $PGREP -f "$TRP_REGEX" &>/dev/null ; then
+    echo $TRUE
+    return $TRUE
+  else
+    echo $FALSE
+    return $FALSE
+  fi
 }
 
 function get_bindIP_from_rtorrent() {
@@ -458,26 +560,6 @@ function write_publicIP_to_rtorrent() {
   return $TRUE
 }
 
-
-function test_PIA_portforward() {
-  if [ -f ${PIA_INFO_FILE} ]; then
-    port=$(cat $PIA_INFO_FILE | grep 'port:' | cut -d: -f2)
-    public_ip=$(cat $PIA_INFO_FILE | grep 'publicIP:' | cut -d: -f2)
-  else
-    echo $FALSE
-    return $FALSE
-  fi
-
-  ext_status=$($CURL -s -X POST -d "remoteAddress=$public_ip&portNumber=$port" "https://ports.yougetsignal.com/check-port.php" | awk 'BEGIN { RS=" ";FS="\"" } /alt/{print $2}')
-
-  if [ "$ext_status" == "Open" ]; then
-    echo $TRUE
-    return $TRUE
-  fi
-
-  echo $FALSE
-  return $FALSE
-}
 
 function get_rtorrent_cfg_string() {
   
@@ -561,7 +643,7 @@ function recondition_rTorrent() {
   #  term_print "$(printf "%-21s %8s : \033[1m%-16s\033[0m" "PIA Port Forward" "$(check_PIA_portfwd_cfg)" "Bad")"
   if ! port=$(check_PIA_portfwd_cfg); then
     term_print "$(printf "%-24s %8s : \033[1m%-16s\033[0m" "PIA Port Forward" "$port" "Bad")"
-    log "PIA Port Forward configuration is bad, resetting"
+    warning "PIA Port Forward configuration is bad, resetting"
     port=$(create_PIA_portforward)
     if [ "$port" == "$FALSE" ]; then
       error "Making PIA portforward call"
@@ -664,7 +746,6 @@ function status_rTorrent() {
     term_print '---------------------------------------------------------------'
     term_print "$(printf "%-12s | %-15s | %-15s | %-15s" "Test" "PIA VPN" "System" "rTorrent" )"
     term_print '---------------------------------------------------------------'
-
     vpn_running_test=$(is_VPN_up)
     tor_running_test=$(is_rTorrent_running)
     term_print "$(printf "%-12s | %-15s | %-15s | %-15s" "Running" `if [ "$vpn_running_test" == "$TRUE" ];then echo Yes;else echo No;fi` "N/A" `if [ "$tor_running_test" == "$TRUE" ];then echo Yes;else echo No;fi` )"
@@ -874,6 +955,22 @@ function install() {
 
 function vpn_call_rTorrent() {
 
+  # Need to go over this logic, too many duplicate
+
+  # STOP_START_RTORRENT_ON_VPN_CONNECTION = SSTORVPN
+  # 1 Call UP from boot, don't do anything.
+  # 2 Call UP on VPN bounce.
+  #      a) If torrent is running reconfigure torrent.
+  #      b) If torrent is down & SSTORVPN=yes start torrent. (How to detect this from #1????????) use uptime
+  # 3 Call DOWN if SSTORVPN=yes, stop rtorrent.
+  # 4 call 
+
+  # Called from boot, do nothing, let system start rtorrent
+  uptimesec=$(awk 'BEGIN { FS="."}{ print $1}' /proc/uptime)
+  if [ $uptimesec -lt 120 ]; then
+    log "Called from systemboot, not doing anything"
+    return $TRUE
+  fi
 
   bindIP = $BAD_IP
   pubIP = $BAD_IP
@@ -881,8 +978,16 @@ function vpn_call_rTorrent() {
 
   # is up, get new information.
   if [ "$1" == "up" ]; then
-    # chances are this is all changed, but chack first.
-    if ! port=$(check_PIA_portfwd_cfg); then
+    if [ "$(is_rTorrent_running)" == "$FALSE" ]; then
+      if [ "$STOP_START_RTORRENT_ON_VPN_CONNECTION" == "$TRUE" ]; then
+        log "Starting rTorrent"
+        $START_RTORNT_CMD
+      fi
+      # Let rTorrent fix it's own connection on startup, since we just started it.
+      return $TRUE
+    else
+     # chances are this is all changed, but chack first.
+     if ! port=$(check_PIA_portfwd_cfg); then
       if ! port=$(create_PIA_portforward); then
         error "Making PIA portforward call"
         echo $FALSE
@@ -897,15 +1002,32 @@ function vpn_call_rTorrent() {
         echo $FALSE
         return $FALSE
       fi
+     fi
     fi
+  else
+    # VPN went down.
+    if [ "$STOP_START_RTORRENT_ON_VPN_CONNECTION" == "$TRUE" ]; then
+      log "Stopping rTorrent"
+      $STOP_RTORNT_CMD
+    fi
+    return $TRUE
   fi
 
 
-  if [ "$(is_rTorrent_running)" == "$FALSE" ]; then
-    # No point in doing anything, probably got here from VPN starting on boot
-    # before torrent is running, so let torrent start and sort it's own config out
-    return;
-  fi
+  #if [ "$(is_rTorrent_running)" == "$FALSE" ]; then
+  #  # No point in doing anything, probably got here from VPN starting on boot
+  #  # before torrent is running, so let torrent start and sort it's own config out
+  #  # Need
+  #  if [ "$STOP_START_RTORRENT_ON_VPN_CONNECTION" == "$TRUE" ]; then
+  #    # We may have been called from boot process where VPN starts, at which point we was to let
+  #    # the system(d) start rtorrent.  Need to come up with better solution, but for moment
+  #    # simply delay the start.
+  #    nohup bash -c "sleep 5 ; $START_RTORNT_CMD" > /tmp/`basename $0`.nohup &
+  #    #$START_RTORNT_CMD
+  #    return $TRUE
+  #  fi
+  #  return;
+  #fi
 
   # if VPN is down, we want to write null info to rTorrent
   # so still write the bad_xx values.
@@ -933,10 +1055,11 @@ function recover_helper_error() {
   continue=$TRUE
   # Check VPN is up
   if [ "$(is_VPN_up)" == "$FALSE" ]; then
+    # We should never get here, as these helper functions are executed from rtorrent.
     error "VPN is down, Restarting!"
-    $STOP_VPN_CMD
+    #$STOP_VPN_CMD  # Don;t stop, ot will kick the rtorrent_vpn_up part of this script.
     $START_VPN_CMD
-    sleep 2
+    sleep 5
     if [ "$(is_VPN_up)" == "$FALSE" ]; then
       error "VPN restart failed!"
       rtn=$FALSE
@@ -1007,6 +1130,14 @@ if [ "$1" == "install" ]; then
   exit
 fi
 
+# before anything else, stop rtorrent if VPN is down.
+if [ "$STOP_START_RTORRENT_ON_VPN_CONNECTION" == "$TRUE" ]; then
+  if ! rtn=$(is_VPN_up); then
+    $STOP_RTORNT_CMD
+  fi
+fi
+
+
 case `basename $0` in
   *rtorrent_recondition*)
     exit $(recondition_rTorrent)
@@ -1065,6 +1196,14 @@ case `basename $0` in
         echo "Public IP   : $(get_rtorrent_cfg_string 'network.local_address')"
         echo "Public Port : $(get_rtorrent_cfg_string 'network.port_range')"
         echo "VPN IP      : $(get_rtorrent_cfg_string 'network.bind_address')"
+      ;;
+      is_vpn_up)
+        if rtn=$(is_VPN_up); then
+          echo "VPN is up"
+        else
+          echo "VPN is down"
+        fi
+        exit $rtn
       ;;
       *)
         echo "Parameter '$1' is invalid"
